@@ -71,11 +71,11 @@ func (r *Result) ExitCode() int {
 }
 
 var (
-	ErrSessionStartTimeout  = errors.New("session-start timeout")
-	ErrStopTimeout          = errors.New("stop timeout")
+	ErrSessionStartTimeout   = errors.New("session-start timeout")
+	ErrStopTimeout           = errors.New("stop timeout")
 	ErrTranscriptUnavailable = errors.New("transcript unavailable")
-	ErrSpawnFailed          = errors.New("spawn failed")
-	ErrNoPromptSupplied     = errors.New("no prompt supplied")
+	ErrSpawnFailed           = errors.New("spawn failed")
+	ErrNoPromptSupplied      = errors.New("no prompt supplied")
 )
 
 // BuildArgv builds the argv passed to the child `claude` process.
@@ -113,8 +113,8 @@ func BuildArgv(binary, settingsJSON string, opts Options) []string {
 type sharedState struct {
 	debug bool
 
-	writeMu        sync.Mutex
-	pendingToPTY   []byte // bytes the DEC responder wants written back
+	writeMu      sync.Mutex
+	pendingToPTY []byte // bytes the DEC responder wants written back
 
 	exited atomic.Bool
 
@@ -363,7 +363,9 @@ func checkTrustDialog(ptyFile *os.File, shared *sharedState, state sessionState,
 // (possibly updated) session state, transcript path, and Stop payload.
 func drainFIFO(ptyFile *os.File, fifoFD int, readBuf []byte, fifoBuf *[]byte, state sessionState, opts Options) (sessionState, string, string) {
 	n, _ := syscall.Read(fifoFD, readBuf)
-	if n == 0 {
+	// n is 0 on EOF; -1 with errno=EAGAIN when the non-blocking FIFO has
+	// nothing buffered — both mean "nothing to drain this tick".
+	if n <= 0 {
 		return state, "", ""
 	}
 	*fifoBuf = append(*fifoBuf, readBuf[:n]...)
@@ -424,7 +426,11 @@ func sendPrompt(ptyFile *os.File, opts Options) sessionState {
 // The Stop hook can fire a few milliseconds before claude flushes the
 // assistant message line into the transcript.
 func loadSummary(transcriptPath, stopPayload string) (transcript.Summary, error) {
-	if s, ok := readTranscriptWithRetry(transcriptPath); ok {
+	return loadSummaryBudgeted(transcriptPath, stopPayload, transcriptRetries, transcriptRetryInterval)
+}
+
+func loadSummaryBudgeted(transcriptPath, stopPayload string, attempts int, interval time.Duration) (transcript.Summary, error) {
+	if s, ok := readTranscriptWithBudget(transcriptPath, attempts, interval); ok {
 		return s, nil
 	}
 	if stopPayload == "" {
@@ -450,12 +456,16 @@ const (
 )
 
 func readTranscriptWithRetry(path string) (transcript.Summary, bool) {
-	for range transcriptRetries {
+	return readTranscriptWithBudget(path, transcriptRetries, transcriptRetryInterval)
+}
+
+func readTranscriptWithBudget(path string, attempts int, interval time.Duration) (transcript.Summary, bool) {
+	for range attempts {
 		s, err := transcript.ParseFile(path)
 		if err == nil && (len(s.FinalText) > 0 || s.IsError) {
 			return s, true
 		}
-		time.Sleep(transcriptRetryInterval)
+		time.Sleep(interval)
 	}
 	return transcript.Summary{}, false
 }

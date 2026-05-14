@@ -50,30 +50,30 @@ var (
 const defaultTimeoutSeconds = 300
 
 type Options struct {
-	Prompt                       string
-	HasPrompt                    bool
-	InputFile                    string
-	OutputFormat                 OutputFormat
-	Model                        string
-	HasModel                     bool
-	MaxTurns                     uint32
-	HasMaxTurns                  bool
-	AllowedTools                 string
-	HasAllowedTools              bool
-	DangerouslySkipPermissions   bool
-	ResumeSession                string
-	HasResumeSession             bool
-	Continue                     bool
-	SessionID                    string
-	HasSessionID                 bool
-	Cwd                          string
-	HasCwd                       bool
-	Verbose                      bool
-	TimeoutSeconds               uint32
-	Debug                        bool
-	ShowHelp                     bool
-	ShowVersion                  bool
-	Passthrough                  []string
+	Prompt                     string
+	HasPrompt                  bool
+	InputFile                  string
+	OutputFormat               OutputFormat
+	Model                      string
+	HasModel                   bool
+	MaxTurns                   uint32
+	HasMaxTurns                bool
+	AllowedTools               string
+	HasAllowedTools            bool
+	DangerouslySkipPermissions bool
+	ResumeSession              string
+	HasResumeSession           bool
+	Continue                   bool
+	SessionID                  string
+	HasSessionID               bool
+	Cwd                        string
+	HasCwd                     bool
+	Verbose                    bool
+	TimeoutSeconds             uint32
+	Debug                      bool
+	ShowHelp                   bool
+	ShowVersion                bool
+	Passthrough                []string
 }
 
 const helpText = `Usage: claude-p [OPTIONS] [PROMPT]

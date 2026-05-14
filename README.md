@@ -1,3 +1,14 @@
+<p align="center">
+  <img src="./assets/banner.png" alt="claude-p-go" />
+</p>
+
+<p align="center">
+  <a href="https://pkg.go.dev/github.com/jmadore-payfacto/claude-p-go"><img src="https://pkg.go.dev/badge/github.com/jmadore-payfacto/claude-p-go.svg" alt="Go Reference"></a>
+  <a href="https://goreportcard.com/report/github.com/jmadore-payfacto/claude-p-go"><img src="https://goreportcard.com/badge/github.com/jmadore-payfacto/claude-p-go" alt="Go Report Card"></a>
+  <a href="./go.mod"><img src="https://img.shields.io/github/go-mod/go-version/jmadore-payfacto/claude-p-go" alt="Go Version"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
+
 # claude-p-go
 
 > **Use at your own risk.** This package and repository exist for
@@ -5,7 +16,7 @@
 > on how a product is used are fundamentally unenforceable.
 
 A drop-in replacement for `claude -p` that drives the interactive
-`claude` UI inside an in-process PTY session. **Go port** of the
+`claude` CLI inside an in-process PTY session. **Go port** of the
 original Zig implementation.
 
 ## Use
@@ -98,7 +109,7 @@ cd claude-p-go
 go build ./cmd/claude-p
 ```
 
-Requires Go **1.22+**.
+Requires Go **1.25+**.
 
 ## As a Go library
 
@@ -133,6 +144,22 @@ func main() {
 The `Options` struct mirrors the CLI flags 1:1. See [`claudep.go`](./claudep.go)
 for the full API.
 
+Runnable end-to-end examples live under [`examples/`](./examples/):
+
+| Example | What it shows |
+| ------- | ------------- |
+| [`examples/text`](./examples/text/) | Programmatic access to `Summary` — final text, turns, cost. |
+| [`examples/json`](./examples/json/) | `result.Write(os.Stdout, FormatJSON)` plus typed access to `Usage`. |
+| [`examples/stream-json`](./examples/stream-json/) | Stream-JSONL output + walking the replay line-by-line in-process. |
+
+```bash
+go run ./examples/text        "what is the capital of France?"
+go run ./examples/json        "summarize Go's net/http package in 2 sentences" | jq .usage
+go run ./examples/stream-json "explain quicksort" | jq -c 'select(.type=="assistant")'
+```
+
+All three require `claude` on `$PATH` and a live Claude Code login.
+
 ## Relation to the original
 
 This is a Go port of the original Zig
@@ -147,3 +174,5 @@ byte-for-byte. The implementation differs:
 ## License
 
 MIT.
+
+The claude-p-go logo is adapted from the Go gopher designed by Renee French and licensed under the Creative Commons 3.0 Attributions license.

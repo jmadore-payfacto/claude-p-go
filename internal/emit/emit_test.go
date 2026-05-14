@@ -3,12 +3,35 @@ package emit
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/jmadore-payfacto/claude-p-go/internal/args"
 	"github.com/jmadore-payfacto/claude-p-go/internal/transcript"
 )
+
+// failingWriter returns errFailingWriter after `okBytes` bytes have been
+// successfully written. Used to exercise the error paths in emit*.
+type failingWriter struct {
+	okBytes int
+	written int
+}
+
+var errFailingWriter = errors.New("failing-writer")
+
+func (w *failingWriter) Write(p []byte) (int, error) {
+	remaining := w.okBytes - w.written
+	if remaining <= 0 {
+		return 0, errFailingWriter
+	}
+	if len(p) <= remaining {
+		w.written += len(p)
+		return len(p), nil
+	}
+	w.written += remaining
+	return remaining, errFailingWriter
+}
 
 func parseAndEmit(t *testing.T, fmt args.OutputFormat, jsonl string) string {
 	t.Helper()
@@ -74,6 +97,51 @@ func TestEmitJSONError(t *testing.T) {
 	}
 	if m["subtype"] != "error" || !m["is_error"].(bool) {
 		t.Fatalf("bad: %+v", m)
+	}
+}
+
+func TestEmitUnknownFormatIsNoop(t *testing.T) {
+	var buf bytes.Buffer
+	s := transcript.Summary{FinalText: "x"}
+	if err := Emit(&buf, args.OutputFormat(99), Envelope{Summary: &s}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("expected no output, got %q", buf.String())
+	}
+}
+
+func TestEmitTextWriterError(t *testing.T) {
+	s := transcript.Summary{FinalText: "hello"}
+	err := Emit(&failingWriter{okBytes: 0}, args.FormatText, Envelope{Summary: &s})
+	if !errors.Is(err, errFailingWriter) {
+		t.Fatalf("expected errFailingWriter, got %v", err)
+	}
+}
+
+func TestEmitTextNewlineWriterError(t *testing.T) {
+	// FinalText has no trailing newline → emitText writes the text, then "\n".
+	// Let the body succeed but the trailing newline fail.
+	s := transcript.Summary{FinalText: "hi"}
+	err := Emit(&failingWriter{okBytes: 2}, args.FormatText, Envelope{Summary: &s})
+	if !errors.Is(err, errFailingWriter) {
+		t.Fatalf("expected errFailingWriter, got %v", err)
+	}
+}
+
+func TestEmitJSONWriterError(t *testing.T) {
+	s := transcript.Summary{FinalText: "hi", SessionID: "s"}
+	err := Emit(&failingWriter{okBytes: 0}, args.FormatJSON, Envelope{Summary: &s})
+	if !errors.Is(err, errFailingWriter) {
+		t.Fatalf("expected errFailingWriter, got %v", err)
+	}
+}
+
+func TestEmitStreamJSONReplayWriterError(t *testing.T) {
+	s := transcript.Summary{FinalText: "hi", JSONLReplay: `{"x":1}` + "\n"}
+	err := Emit(&failingWriter{okBytes: 0}, args.FormatStreamJSON, Envelope{Summary: &s})
+	if !errors.Is(err, errFailingWriter) {
+		t.Fatalf("expected errFailingWriter, got %v", err)
 	}
 }
 

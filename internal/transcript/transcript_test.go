@@ -3,6 +3,8 @@ package transcript
 import (
 	"errors"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -134,5 +136,27 @@ func TestMultiBlockTextConcat(t *testing.T) {
 	}
 	if s.FinalText != "part1 part2" {
 		t.Fatalf("text: %q", s.FinalText)
+	}
+}
+
+func TestParseFileRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.jsonl")
+	jsonl := `{"type":"assistant","session_id":"sid","message":{"content":[{"type":"text","text":"file-hi"}]}}` + "\n"
+	if err := os.WriteFile(path, []byte(jsonl), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.FinalText != "file-hi" || s.SessionID != "sid" {
+		t.Fatalf("got %+v", s)
+	}
+}
+
+func TestParseFileMissing(t *testing.T) {
+	if _, err := ParseFile("/no/such/file.jsonl"); err == nil {
+		t.Fatal("expected error")
 	}
 }

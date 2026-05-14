@@ -103,3 +103,84 @@ func TestCreateRoundTrip(t *testing.T) {
 		t.Fatalf("fifo missing: %v", err)
 	}
 }
+
+func TestCreateFilePermissions(t *testing.T) {
+	h, err := Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Cleanup()
+	scriptInfo, err := os.Stat(h.ScriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := scriptInfo.Mode().Perm(); mode != 0o700 {
+		t.Fatalf("script perm: %o", mode)
+	}
+	dirInfo, err := os.Stat(h.TmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := dirInfo.Mode().Perm(); mode != 0o700 {
+		t.Fatalf("dir perm: %o", mode)
+	}
+}
+
+func TestCleanupRemovesArtifacts(t *testing.T) {
+	h, err := Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpDir, fifo, script := h.TmpDir, h.FifoPath, h.ScriptPath
+	h.Cleanup()
+	for _, p := range []string{fifo, script, tmpDir} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("still present: %s (err=%v)", p, err)
+		}
+	}
+}
+
+func TestCleanupNilHarnessSafe(t *testing.T) {
+	var h *Harness
+	h.Cleanup() // must not panic
+}
+
+func TestEventString(t *testing.T) {
+	cases := []struct {
+		e    Event
+		want string
+	}{
+		{EventSessionStart, "SessionStart"},
+		{EventStop, "Stop"},
+		{EventUnknown, "Unknown"},
+	}
+	for _, tt := range cases {
+		if got := tt.e.String(); got != tt.want {
+			t.Fatalf("%v: got %q want %q", tt.e, got, tt.want)
+		}
+	}
+}
+
+func TestParseEventUnknown(t *testing.T) {
+	if ParseEvent("Wat") != EventUnknown {
+		t.Fatal("expected EventUnknown")
+	}
+}
+
+func TestExtractStringFieldMissing(t *testing.T) {
+	if _, ok := ExtractTranscriptPath(`{"other":"x"}`); ok {
+		t.Fatal("expected !ok")
+	}
+}
+
+func TestExtractStringFieldBadJSON(t *testing.T) {
+	if _, ok := ExtractSessionID(`not-json`); ok {
+		t.Fatal("expected !ok")
+	}
+}
+
+func TestExtractStringFieldNonString(t *testing.T) {
+	if _, ok := ExtractSessionID(`{"session_id":42}`); ok {
+		t.Fatal("expected !ok for non-string value")
+	}
+}
