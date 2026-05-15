@@ -34,8 +34,12 @@ func TestBuildSettingsJSON(t *testing.T) {
 			t.Fatalf("type: %v", inner["type"])
 		}
 		cmd := inner["command"].(string)
-		if !strings.Contains(cmd, "/tmp/hook.sh") || !strings.HasSuffix(cmd, " "+evt) {
+		if !strings.Contains(cmd, "/tmp/hook.sh") {
 			t.Fatalf("cmd: %q", cmd)
+		}
+		args, _ := inner["args"].([]any)
+		if len(args) != 1 || args[0] != evt {
+			t.Fatalf("args: %v", inner["args"])
 		}
 	}
 }

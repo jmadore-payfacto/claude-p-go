@@ -30,8 +30,9 @@ import (
 )
 
 type hookCommand struct {
-	Type    string `json:"type"`
-	Command string `json:"command"`
+	Type    string   `json:"type"`
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
 }
 
 type hookMatcher struct {
@@ -100,21 +101,21 @@ func findSettings(argv []string) string {
 	return ""
 }
 
-func parseHookCommands(jsonStr string) (sessionStart, stop string, err error) {
+func parseHookCommands(jsonStr string) (sessionStart, stop hookCommand, err error) {
 	var s settings
 	if err := json.Unmarshal([]byte(jsonStr), &s); err != nil {
-		return "", "", err
+		return hookCommand{}, hookCommand{}, err
 	}
-	pick := func(event string) string {
+	pick := func(event string) hookCommand {
 		matchers := s.Hooks[event]
 		if len(matchers) == 0 || len(matchers[0].Hooks) == 0 {
-			return ""
+			return hookCommand{}
 		}
-		return matchers[0].Hooks[0].Command
+		return matchers[0].Hooks[0]
 	}
 	sessionStart, stop = pick("SessionStart"), pick("Stop")
-	if sessionStart == "" || stop == "" {
-		return "", "", fmt.Errorf("missing SessionStart or Stop hook")
+	if sessionStart.Command == "" || stop.Command == "" {
+		return hookCommand{}, hookCommand{}, fmt.Errorf("missing SessionStart or Stop hook")
 	}
 	return sessionStart, stop, nil
 }
@@ -169,8 +170,10 @@ func writeTranscript(sessionID, reply string) (string, error) {
 	return path, nil
 }
 
-func fireHook(command, payload string) error {
-	cmd := exec.Command("sh", "-c", command)
+func fireHook(h hookCommand, payload string) error {
+	// Exec form: command + args directly, no shell. Mirrors how Claude Code
+	// runs hooks registered with an "args" field.
+	cmd := exec.Command(h.Command, h.Args...)
 	cmd.Stdin = strings.NewReader(payload)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

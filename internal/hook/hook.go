@@ -6,8 +6,6 @@ package hook
 
 import (
 	"encoding/json"
-	"fmt"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,10 +43,10 @@ exit 0
 
 // Create builds a harness with tmp dir, events file, relay script, and JSON.
 func Create() (*Harness, error) {
-	pid := os.Getpid()
-	suffix := rand.Uint32()
-	dir := filepath.Join(os.TempDir(), fmt.Sprintf("claude-p-%d-%x", pid, suffix))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	// MkdirTemp creates the directory atomically with O_EXCL semantics and
+	// mode 0o700, sidestepping symlink races on shared /tmp directories.
+	dir, err := os.MkdirTemp("", "claude-p-*")
+	if err != nil {
 		return nil, err
 	}
 
@@ -81,8 +79,9 @@ func Create() (*Harness, error) {
 }
 
 type hookCommand struct {
-	Type    string `json:"type"`
-	Command string `json:"command"`
+	Type    string   `json:"type"`
+	Command string   `json:"command"`
+	Args    []string `json:"args,omitempty"`
 }
 
 type hookMatcher struct {
@@ -95,15 +94,18 @@ type settings struct {
 }
 
 func buildSettingsJSON(scriptPath string) (string, error) {
-	// Forward slashes so the command parses correctly when Claude Code runs
-	// it through Git Bash on Windows (backslashes are escape chars in sh).
+	// Exec form (command + args) bypasses the system shell on every
+	// platform — no whitespace-tokenisation surprises when the temp path
+	// contains spaces (e.g. C:\Users\First Last\... on Windows). Forward
+	// slashes keep the path well-formed for Git Bash.
 	command := filepath.ToSlash(scriptPath)
 	mk := func(event string) []hookMatcher {
 		return []hookMatcher{{
 			Matcher: "*",
 			Hooks: []hookCommand{{
 				Type:    "command",
-				Command: command + " " + event,
+				Command: command,
+				Args:    []string{event},
 			}},
 		}}
 	}
@@ -146,13 +148,13 @@ func (e Event) String() string {
 	return "Unknown"
 }
 
-// Line is a parsed "<event>\t<payload>" entry from the FIFO.
+// Line is a parsed "<event>\t<payload>" entry from the events file.
 type Line struct {
 	Event   Event
 	Payload string
 }
 
-// ParseLine parses one FIFO line. Returns false if malformed.
+// ParseLine parses one events-file line. Returns false if malformed.
 func ParseLine(raw string) (Line, bool) {
 	raw = strings.TrimRight(raw, "\r\n")
 	name, payload, ok := strings.Cut(raw, "\t")

@@ -276,7 +276,7 @@ func ptyReaderLoop(ptyFile pty.Pty, shared *sharedState, debug bool) {
 // driveSession runs the main loop until a Stop hook delivers a transcript
 // path (or its `last_assistant_message` payload). Returns the transcript
 // path and the raw Stop payload (either may be empty if the other isn't).
-func driveSession(ptyFile pty.Pty, eventsFile *os.File, shared *sharedState, opts Options, start time.Time) (string, string, error) {
+func driveSession(ptyFile pty.Pty, eventsFile io.Reader, shared *sharedState, opts Options, start time.Time) (string, string, error) {
 	state := stateWaitingForReady
 	var (
 		eventsBuf        []byte
@@ -354,7 +354,7 @@ func checkTrustDialog(ptyFile pty.Pty, shared *sharedState, state sessionState, 
 
 // drainEvents reads newly appended hook events and processes them. Returns
 // the (possibly updated) session state, transcript path, and Stop payload.
-func drainEvents(ptyFile pty.Pty, eventsFile *os.File, readBuf []byte, eventsBuf *[]byte, state sessionState, opts Options) (sessionState, string, string) {
+func drainEvents(ptyFile pty.Pty, eventsFile io.Reader, readBuf []byte, eventsBuf *[]byte, state sessionState, opts Options) (sessionState, string, string) {
 	n, _ := eventsFile.Read(readBuf)
 	// n is 0 at EOF — caught up, nothing appended this tick. The file offset
 	// stays put, so a later Read picks up whatever the hook appends next.
@@ -447,10 +447,6 @@ const (
 	stateWaitingForReady sessionState = iota
 	stateAwaitingStop
 )
-
-func readTranscriptWithRetry(path string) (transcript.Summary, bool) {
-	return readTranscriptWithBudget(path, transcriptRetries, transcriptRetryInterval)
-}
 
 func readTranscriptWithBudget(path string, attempts int, interval time.Duration) (transcript.Summary, bool) {
 	for range attempts {
