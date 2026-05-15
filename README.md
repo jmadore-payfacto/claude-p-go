@@ -173,6 +173,6 @@ byte-for-byte. The implementation differs:
 
 ## License
 
-MIT.
+MIT — see [LICENSE](LICENSE).
 
-The claude-p-go logo is adapted from the Go gopher designed by Renee French and licensed under the Creative Commons 3.0 Attributions license.
+The claude-p-go logo is adapted from the Go gopher designed by Renée French and licensed under the Creative Commons 3.0 Attributions license.
