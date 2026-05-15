@@ -1,91 +1,80 @@
 // Package hook generates the Stop/SessionStart hook plumbing for a `claude`
-// invocation: a per-run temp dir, a FIFO the parent reads, a tiny shell
-// script that relays the hook payload to the FIFO, and the inline --settings
-// JSON that tells `claude` to call it.
+// invocation: a per-run temp dir, an append-only events file the parent
+// tails, a tiny shell script that relays each hook payload to that file, and
+// the inline --settings JSON that tells `claude` to call it.
 package hook
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"golang.org/x/sys/unix"
 )
 
 // Harness holds the lifetime of a hook environment. Call Cleanup when done.
 type Harness struct {
 	TmpDir       string
-	FifoPath     string
+	EventsPath   string
 	ScriptPath   string
 	SettingsJSON string
 }
 
-// Cleanup removes the temp dir, FIFO, and script. Best-effort.
+// Cleanup removes the temp dir, events file, and script. Best-effort.
 func (h *Harness) Cleanup() {
 	if h == nil {
 		return
 	}
-	_ = os.Remove(h.FifoPath)
+	_ = os.Remove(h.EventsPath)
 	_ = os.Remove(h.ScriptPath)
 	_ = os.Remove(h.TmpDir)
 }
 
 const scriptBody = `#!/bin/sh
-# Relay a Claude Code hook event to claude-p's FIFO.
+# Relay a Claude Code hook event to claude-p's events file.
 #   $1 = event name (e.g. "Stop", "SessionStart")
 # stdin = the hook's JSON payload (single line, no embedded newlines).
 set -eu
 event="$1"
-fifo="${CLAUDE_P_FIFO:?missing CLAUDE_P_FIFO}"
+events="${CLAUDE_P_EVENTS:?missing CLAUDE_P_EVENTS}"
 payload="$(cat)"
-printf '%s\t%s\n' "$event" "$payload" >> "$fifo"
+printf '%s\t%s\n' "$event" "$payload" >> "$events"
 exit 0
 `
 
-func tmpRoot() string {
-	if v := os.Getenv("TMPDIR"); v != "" {
-		return v
-	}
-	return "/tmp"
-}
-
-// Create builds a harness with tmp dir, FIFO, relay script, and inline JSON.
+// Create builds a harness with tmp dir, events file, relay script, and JSON.
 func Create() (*Harness, error) {
 	pid := os.Getpid()
 	suffix := rand.Uint32()
-	dir := filepath.Join(tmpRoot(), fmt.Sprintf("claude-p-%d-%x", pid, suffix))
+	dir := filepath.Join(os.TempDir(), fmt.Sprintf("claude-p-%d-%x", pid, suffix))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
 
-	fifoPath := filepath.Join(dir, "events.fifo")
-	if err := unix.Mkfifo(fifoPath, 0o600); err != nil {
+	// Pre-create the events file empty so the parent can open it for reading
+	// before the child's first hook fires.
+	eventsPath := filepath.Join(dir, "events.log")
+	if err := os.WriteFile(eventsPath, nil, 0o600); err != nil {
 		_ = os.RemoveAll(dir)
-		return nil, fmt.Errorf("mkfifo: %w", err)
+		return nil, err
 	}
 
 	scriptPath := filepath.Join(dir, "hook.sh")
 	if err := os.WriteFile(scriptPath, []byte(scriptBody), 0o700); err != nil {
-		_ = os.Remove(fifoPath)
 		_ = os.RemoveAll(dir)
 		return nil, err
 	}
 
 	settings, err := buildSettingsJSON(scriptPath)
 	if err != nil {
-		_ = os.Remove(fifoPath)
-		_ = os.Remove(scriptPath)
 		_ = os.RemoveAll(dir)
 		return nil, err
 	}
 
 	return &Harness{
 		TmpDir:       dir,
-		FifoPath:     fifoPath,
+		EventsPath:   eventsPath,
 		ScriptPath:   scriptPath,
 		SettingsJSON: settings,
 	}, nil
@@ -106,12 +95,15 @@ type settings struct {
 }
 
 func buildSettingsJSON(scriptPath string) (string, error) {
+	// Forward slashes so the command parses correctly when Claude Code runs
+	// it through Git Bash on Windows (backslashes are escape chars in sh).
+	command := filepath.ToSlash(scriptPath)
 	mk := func(event string) []hookMatcher {
 		return []hookMatcher{{
 			Matcher: "*",
 			Hooks: []hookCommand{{
 				Type:    "command",
-				Command: scriptPath + " " + event,
+				Command: command + " " + event,
 			}},
 		}}
 	}
@@ -201,6 +193,3 @@ func extractStringField(payload, field string) (string, bool) {
 	}
 	return s, true
 }
-
-// ErrMkfifo is returned when mkfifo fails.
-var ErrMkfifo = errors.New("mkfifo failed")

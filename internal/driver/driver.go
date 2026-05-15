@@ -8,14 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
-	"github.com/creack/pty"
+	"github.com/aymanbagabas/go-pty"
 
 	"github.com/jmadore-payfacto/claude-p-go/internal/args"
 	"github.com/jmadore-payfacto/claude-p-go/internal/emit"
@@ -136,7 +135,7 @@ const (
 	transcriptRetries       = 40
 	transcriptRetryInterval = 50 * time.Millisecond
 	ptyReadBufferSize       = 4096
-	fifoReadBufferSize      = 4096
+	eventsReadBufferSize    = 4096
 )
 
 // Run spawns claude under a PTY, drives the UI, and returns a Result.
@@ -152,11 +151,11 @@ func Run(opts Options) (*Result, error) {
 	}
 	defer harness.Cleanup()
 
-	fifoFD, err := openFifo(harness.FifoPath)
+	eventsFile, err := openEventsFile(harness.EventsPath)
 	if err != nil {
 		return nil, err
 	}
-	defer syscall.Close(fifoFD)
+	defer eventsFile.Close()
 
 	cmd, ptyFile, err := spawnClaude(harness, opts)
 	if err != nil {
@@ -169,7 +168,7 @@ func Run(opts Options) (*Result, error) {
 	defer terminateChild(cmd)
 
 	start := time.Now()
-	transcriptPath, stopPayload, err := driveSession(ptyFile, fifoFD, shared, opts, start)
+	transcriptPath, stopPayload, err := driveSession(ptyFile, eventsFile, shared, opts, start)
 	if err != nil {
 		return nil, err
 	}
@@ -197,17 +196,17 @@ func applyDefaults(opts *Options) {
 	}
 }
 
-// openFifo opens the FIFO for reading BEFORE spawning the child so its hook
-// never blocks trying to open the write side.
-func openFifo(path string) (int, error) {
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK, 0)
+// openEventsFile opens the events file for reading. hook.Create pre-creates
+// it empty, so this never races the child's first hook write.
+func openEventsFile(path string) (*os.File, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return 0, fmt.Errorf("%w: open fifo: %v", ErrSpawnFailed, err)
+		return nil, fmt.Errorf("%w: open events file: %v", ErrSpawnFailed, err)
 	}
-	return fd, nil
+	return f, nil
 }
 
-func spawnClaude(harness *hook.Harness, opts Options) (*exec.Cmd, *os.File, error) {
+func spawnClaude(harness *hook.Harness, opts Options) (*pty.Cmd, pty.Pty, error) {
 	binary := opts.ClaudePath
 	if binary == "" {
 		binary = "claude"
@@ -215,29 +214,35 @@ func spawnClaude(harness *hook.Harness, opts Options) (*exec.Cmd, *os.File, erro
 	argv := BuildArgv(binary, harness.SettingsJSON, opts)
 
 	env := append(os.Environ(),
-		"CLAUDE_P_FIFO="+harness.FifoPath,
+		"CLAUDE_P_EVENTS="+filepath.ToSlash(harness.EventsPath),
 		"TERM=xterm-256color",
 	)
 
-	cmd := exec.Command(argv[0], argv[1:]...)
+	ptmx, err := pty.New()
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %v", ErrSpawnFailed, err)
+	}
+	if err := ptmx.Resize(int(opts.Cols), int(opts.Rows)); err != nil {
+		_ = ptmx.Close()
+		return nil, nil, fmt.Errorf("%w: %v", ErrSpawnFailed, err)
+	}
+
+	cmd := ptmx.Command(argv[0], argv[1:]...)
 	cmd.Env = env
 	if opts.HasCwd {
 		cmd.Dir = opts.Cwd
 	}
 
-	ptyFile, err := pty.StartWithSize(cmd, &pty.Winsize{
-		Rows: opts.Rows,
-		Cols: opts.Cols,
-	})
-	if err != nil {
+	if err := cmd.Start(); err != nil {
+		_ = ptmx.Close()
 		return nil, nil, fmt.Errorf("%w: %v", ErrSpawnFailed, err)
 	}
-	return cmd, ptyFile, nil
+	return cmd, ptmx, nil
 }
 
 // ptyReaderLoop scans incoming PTY bytes for DEC queries, queues responses,
 // and maintains a rolling buffer of recent output for trust-dialog detection.
-func ptyReaderLoop(ptyFile *os.File, shared *sharedState, debug bool) {
+func ptyReaderLoop(ptyFile pty.Pty, shared *sharedState, debug bool) {
 	buf := make([]byte, ptyReadBufferSize)
 	for {
 		n, err := ptyFile.Read(buf)
@@ -268,26 +273,14 @@ func ptyReaderLoop(ptyFile *os.File, shared *sharedState, debug bool) {
 	}
 }
 
-func terminateChild(cmd *exec.Cmd) {
-	_ = cmd.Process.Signal(syscall.SIGTERM)
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	select {
-	case <-done:
-	case <-time.After(terminateGrace):
-		_ = cmd.Process.Kill()
-		<-done
-	}
-}
-
 // driveSession runs the main loop until a Stop hook delivers a transcript
 // path (or its `last_assistant_message` payload). Returns the transcript
 // path and the raw Stop payload (either may be empty if the other isn't).
-func driveSession(ptyFile *os.File, fifoFD int, shared *sharedState, opts Options, start time.Time) (string, string, error) {
+func driveSession(ptyFile pty.Pty, eventsFile *os.File, shared *sharedState, opts Options, start time.Time) (string, string, error) {
 	state := stateWaitingForReady
 	var (
-		fifoBuf          []byte
-		fifoRead         [fifoReadBufferSize]byte
+		eventsBuf        []byte
+		eventsRead       [eventsReadBufferSize]byte
 		transcriptPath   string
 		stopPayloadOwned string
 	)
@@ -306,7 +299,7 @@ func driveSession(ptyFile *os.File, fifoFD int, shared *sharedState, opts Option
 		flushPendingToPTY(ptyFile, shared)
 		checkTrustDialog(ptyFile, shared, state, opts.Debug)
 
-		newState, path, payload := drainFIFO(ptyFile, fifoFD, fifoRead[:], &fifoBuf, state, opts)
+		newState, path, payload := drainEvents(ptyFile, eventsFile, eventsRead[:], &eventsBuf, state, opts)
 		state = newState
 		if path != "" {
 			transcriptPath = path
@@ -322,7 +315,7 @@ func driveSession(ptyFile *os.File, fifoFD int, shared *sharedState, opts Option
 	}
 }
 
-func flushPendingToPTY(ptyFile *os.File, shared *sharedState) {
+func flushPendingToPTY(ptyFile pty.Pty, shared *sharedState) {
 	shared.writeMu.Lock()
 	var toWrite []byte
 	if len(shared.pendingToPTY) > 0 {
@@ -339,7 +332,7 @@ func flushPendingToPTY(ptyFile *os.File, shared *sharedState) {
 // The dialog appears in unfamiliar directories *before* SessionStart hooks
 // register and is not bypassed by --dangerously-skip-permissions. Default
 // selection is "Yes, I trust this folder".
-func checkTrustDialog(ptyFile *os.File, shared *sharedState, state sessionState, debug bool) {
+func checkTrustDialog(ptyFile pty.Pty, shared *sharedState, state sessionState, debug bool) {
 	if shared.trustDismissed || state != stateWaitingForReady {
 		return
 	}
@@ -359,27 +352,27 @@ func checkTrustDialog(ptyFile *os.File, shared *sharedState, state sessionState,
 	shared.trustDismissed = true
 }
 
-// drainFIFO reads pending hook events and processes them. Returns the
-// (possibly updated) session state, transcript path, and Stop payload.
-func drainFIFO(ptyFile *os.File, fifoFD int, readBuf []byte, fifoBuf *[]byte, state sessionState, opts Options) (sessionState, string, string) {
-	n, _ := syscall.Read(fifoFD, readBuf)
-	// n is 0 on EOF; -1 with errno=EAGAIN when the non-blocking FIFO has
-	// nothing buffered — both mean "nothing to drain this tick".
+// drainEvents reads newly appended hook events and processes them. Returns
+// the (possibly updated) session state, transcript path, and Stop payload.
+func drainEvents(ptyFile pty.Pty, eventsFile *os.File, readBuf []byte, eventsBuf *[]byte, state sessionState, opts Options) (sessionState, string, string) {
+	n, _ := eventsFile.Read(readBuf)
+	// n is 0 at EOF — caught up, nothing appended this tick. The file offset
+	// stays put, so a later Read picks up whatever the hook appends next.
 	if n <= 0 {
 		return state, "", ""
 	}
-	*fifoBuf = append(*fifoBuf, readBuf[:n]...)
+	*eventsBuf = append(*eventsBuf, readBuf[:n]...)
 	var (
 		transcriptPath string
 		stopPayload    string
 	)
 	for {
-		nl := bytes.IndexByte(*fifoBuf, '\n')
+		nl := bytes.IndexByte(*eventsBuf, '\n')
 		if nl < 0 {
 			break
 		}
-		line := string((*fifoBuf)[:nl])
-		*fifoBuf = (*fifoBuf)[nl+1:]
+		line := string((*eventsBuf)[:nl])
+		*eventsBuf = (*eventsBuf)[nl+1:]
 		ev, ok := hook.ParseLine(line)
 		if !ok {
 			continue
@@ -409,7 +402,7 @@ func drainFIFO(ptyFile *os.File, fifoFD int, readBuf []byte, fifoBuf *[]byte, st
 // bracketed-paste / burst-input heuristics: if `\r` arrives in the same
 // burst as the prompt body, it lands in the input buffer instead of
 // triggering submit. The gap makes Ink see two events.
-func sendPrompt(ptyFile *os.File, opts Options) sessionState {
+func sendPrompt(ptyFile pty.Pty, opts Options) sessionState {
 	// Give Ink time to finish initialising.
 	time.Sleep(inkInitWait)
 	if opts.Debug {

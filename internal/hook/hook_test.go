@@ -99,8 +99,8 @@ func TestCreateRoundTrip(t *testing.T) {
 	if _, err := os.Stat(h.ScriptPath); err != nil {
 		t.Fatalf("script missing: %v", err)
 	}
-	if _, err := os.Stat(h.FifoPath); err != nil {
-		t.Fatalf("fifo missing: %v", err)
+	if _, err := os.Stat(h.EventsPath); err != nil {
+		t.Fatalf("events file missing: %v", err)
 	}
 }
 
@@ -131,9 +131,9 @@ func TestCleanupRemovesArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpDir, fifo, script := h.TmpDir, h.FifoPath, h.ScriptPath
+	tmpDir, events, script := h.TmpDir, h.EventsPath, h.ScriptPath
 	h.Cleanup()
-	for _, p := range []string{fifo, script, tmpDir} {
+	for _, p := range []string{events, script, tmpDir} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Fatalf("still present: %s (err=%v)", p, err)
 		}

@@ -87,7 +87,9 @@ Unrecognized flags are forwarded verbatim to `claude`.
 
 ## Caveats
 
-- **macOS / Linux only.** No Windows (no `forkpty`).
+- **Windows needs Git Bash.** macOS and Linux work as-is. On Windows
+  the relay hook runs through Git Bash, so `sh` must be on `PATH`;
+  PTY I/O uses ConPTY (Windows 10 1809+).
 - **Requires `claude` on `$PATH`.** The wrapper invokes the real CLI.
 - **Not true streaming.** Tokens are not streamed live — `claude-p`
   waits for the model's turn to finish and then prints. For real-time
@@ -167,9 +169,12 @@ This is a Go port of the original Zig
 surface, exit codes, and stdout format are intended to match
 byte-for-byte. The implementation differs:
 
-- **Zig `NativeSession`** → **`github.com/creack/pty`** for PTY I/O.
+- **Zig `NativeSession`** → **`github.com/aymanbagabas/go-pty`** for PTY
+  I/O (Unix PTY + Windows ConPTY).
 - **Threads + arenas** → goroutines + GC.
 - **Inline JSON builder** → `encoding/json`.
+- **Windows support** — the Zig original is POSIX-only; the Go port runs
+  on Windows when Git Bash is present.
 
 ## License
 
