@@ -4,3 +4,4 @@ bin/
 coverage.html
 coverage.out
 .DS_Store
+.vscode/
