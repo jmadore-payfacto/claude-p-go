@@ -3,6 +3,7 @@ package hook
 import (
 	"encoding/json"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -109,6 +110,9 @@ func TestCreateRoundTrip(t *testing.T) {
 }
 
 func TestCreateFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file mode bits don't apply on Windows")
+	}
 	h, err := Create()
 	if err != nil {
 		t.Fatal(err)

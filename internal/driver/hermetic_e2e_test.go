@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -25,7 +26,11 @@ func buildFakeClaude(t *testing.T) string {
 			fakeClaudeErr = err
 			return
 		}
-		out := filepath.Join(dir, "fake-claude")
+		name := "fake-claude"
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		out := filepath.Join(dir, name)
 		cmd := exec.Command("go", "build", "-o", out, "github.com/jmadore-payfacto/claude-p-go/cmd/fake-claude")
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {

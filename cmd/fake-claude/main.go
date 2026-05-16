@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -171,9 +172,15 @@ func writeTranscript(sessionID, reply string) (string, error) {
 }
 
 func fireHook(h hookCommand, payload string) error {
-	// Exec form: command + args directly, no shell. Mirrors how Claude Code
-	// runs hooks registered with an "args" field.
-	cmd := exec.Command(h.Command, h.Args...)
+	// Real Claude Code routes shell-form hooks through Git Bash on Windows.
+	// Mirror that here: on Windows, run .sh scripts through `sh` so this
+	// hermetic stand-in stays consistent with the production hook policy.
+	name, args := h.Command, h.Args
+	if runtime.GOOS == "windows" && strings.HasSuffix(strings.ToLower(name), ".sh") {
+		args = append([]string{name}, args...)
+		name = "sh"
+	}
+	cmd := exec.Command(name, args...)
 	cmd.Stdin = strings.NewReader(payload)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
