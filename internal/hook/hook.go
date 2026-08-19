@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -98,14 +99,20 @@ func buildSettingsJSON(scriptPath string) (string, error) {
 	// platform — no whitespace-tokenisation surprises when the temp path
 	// contains spaces (e.g. C:\Users\First Last\... on Windows). Forward
 	// slashes keep the path well-formed for Git Bash.
-	command := filepath.ToSlash(scriptPath)
+	script := filepath.ToSlash(scriptPath)
 	mk := func(event string) []hookMatcher {
+		command := script
+		args := []string{event}
+		if runtime.GOOS == "windows" {
+			command = "sh"
+			args = []string{script, event}
+		}
 		return []hookMatcher{{
 			Matcher: "*",
 			Hooks: []hookCommand{{
 				Type:    "command",
 				Command: command,
-				Args:    []string{event},
+				Args:    args,
 			}},
 		}}
 	}

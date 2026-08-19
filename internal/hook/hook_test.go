@@ -35,12 +35,21 @@ func TestBuildSettingsJSON(t *testing.T) {
 			t.Fatalf("type: %v", inner["type"])
 		}
 		cmd := inner["command"].(string)
-		if !strings.Contains(cmd, "/tmp/hook.sh") {
-			t.Fatalf("cmd: %q", cmd)
-		}
 		args, _ := inner["args"].([]any)
-		if len(args) != 1 || args[0] != evt {
-			t.Fatalf("args: %v", inner["args"])
+		if runtime.GOOS == "windows" {
+			if cmd != "sh" {
+				t.Fatalf("cmd: %q", cmd)
+			}
+			if len(args) != 2 || !strings.Contains(args[0].(string), "/tmp/hook.sh") || args[1] != evt {
+				t.Fatalf("args: %v", inner["args"])
+			}
+		} else {
+			if !strings.Contains(cmd, "/tmp/hook.sh") {
+				t.Fatalf("cmd: %q", cmd)
+			}
+			if len(args) != 1 || args[0] != evt {
+				t.Fatalf("args: %v", inner["args"])
+			}
 		}
 	}
 }
