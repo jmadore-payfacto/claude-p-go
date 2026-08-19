@@ -95,10 +95,14 @@ type settings struct {
 }
 
 func buildSettingsJSON(scriptPath string) (string, error) {
-	// Exec form (command + args) bypasses the system shell on every
-	// platform — no whitespace-tokenisation surprises when the temp path
-	// contains spaces (e.g. C:\Users\First Last\... on Windows). Forward
-	// slashes keep the path well-formed for Git Bash.
+	// Exec form (command + args) bypasses the system shell - no
+	// whitespace-tokenisation surprises when the temp path contains spaces
+	// (e.g. C:\Users\First Last\... on Windows). Forward slashes keep the
+	// path well-formed for Git Bash.
+	//
+	// Exec form spawns `command` directly with no shell involved, so on
+	// Windows the script's #!/bin/sh shebang is never honored - hook.sh
+	// would fail to launch. Invoke `sh` explicitly there instead.
 	script := filepath.ToSlash(scriptPath)
 	mk := func(event string) []hookMatcher {
 		command := script
